@@ -1,0 +1,20 @@
+node_modules
+# .env removed so sample can be committed for now (consider reverting in prod)
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs
+*.log
+coverage
+dist
+.tmp
+.DS_Store
+.idea
+.vscode
+*.swp
+.cache
