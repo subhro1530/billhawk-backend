@@ -33,6 +33,82 @@ const APP_ENV = process.env.APP_ENV || "development";
 const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
 const ADMIN_CODE = process.env.ADMIN_CODE || "admin123";
 
+//--------------------- Passport Google OAuth2 setup
+
+const session = require("express-session");
+const passport = require("passport");
+const GoogleStrategy = require("passport-google-oauth20").Strategy;
+
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || "change_me_session_secret",
+    resave: false,
+    saveUninitialized: false,
+  })
+);
+
+app.use(passport.initialize());
+app.use(passport.session());
+
+// Configure Google OAuth
+
+const { google } = require("googleapis");
+
+passport.use(
+  new GoogleStrategy(
+    {
+      clientID: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      callbackURL: process.env.GOOGLE_CALLBACK_URL,
+      scope: [
+        "profile",
+        "email",
+        "https://www.googleapis.com/auth/calendar.events.readonly",
+        "https://www.googleapis.com/auth/gmail.readonly",
+      ],
+    },
+    async (accessToken, refreshToken, profile, done) => {
+      try {
+        // Extract email
+        const email = profile.emails?.[0]?.value;
+        if (!email) return done(new Error("No email found"));
+
+        // Check if user exists, otherwise create
+        let user = await one(
+          `SELECT * FROM users WHERE LOWER(email)=LOWER($1)`,
+          [email]
+        );
+        if (!user) {
+          const id = uuid();
+          const profileData = {
+            reminderOffsetDays: 2,
+            notifications: { push: true },
+          };
+          await q(
+            `INSERT INTO users (id,email,password_hash,plan,profile) VALUES ($1,$2,$3,'free',$4::jsonb)`,
+            [id, email, "", JSON.stringify(profileData)]
+          );
+          user = await one(`SELECT * FROM users WHERE id=$1`, [id]);
+        }
+
+        // Attach Google tokens to user object for later API calls
+        user.googleAccessToken = accessToken;
+        user.googleRefreshToken = refreshToken;
+
+        done(null, user);
+      } catch (err) {
+        done(err, null);
+      }
+    }
+  )
+);
+
+passport.serializeUser((user, done) => done(null, user.id));
+passport.deserializeUser(async (id, done) => {
+  const user = await one(`SELECT * FROM users WHERE id=$1`, [id]);
+  done(null, user || null);
+});
+
 // ----------------------- DB (Neon / Postgres) -----------------------
 if (!NEON_DATABASE_URL) {
   console.error("NEON_DATABASE_URL missing in environment");
@@ -415,6 +491,64 @@ app.put(`${API_PREFIX}/user/me`, auth, async (req, res) => {
   ]);
   const updated = await one(`SELECT * FROM users WHERE id=$1`, [req.user.id]);
   json(res, 200, { data: { user: safeUser(updated) } });
+});
+
+// Start OAuth flow
+app.get(`${API_PREFIX}/auth/google`, passport.authenticate("google"));
+
+// Callback URL
+app.get(
+  `${API_PREFIX}/auth/google/callback`,
+  passport.authenticate("google", { failureRedirect: "/login" }),
+  (req, res) => {
+    // Issue JWT for our app
+    const { token } = issueToken(req.user);
+    res.json({ success: true, user: safeUser(req.user), token });
+  }
+);
+
+// Logout
+app.get(`${API_PREFIX}/auth/google/logout`, (req, res) => {
+  req.logout(() => {});
+  res.json({ success: true });
+});
+
+async function fetchGmailMessages(user) {
+  if (!user.googleAccessToken) return [];
+  const oauth2Client = new google.auth.OAuth2();
+  oauth2Client.setCredentials({ access_token: user.googleAccessToken });
+
+  const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+  const res = await gmail.users.messages.list({ userId: "me", maxResults: 10 });
+  const messages = res.data.messages || [];
+  return messages;
+}
+
+async function fetchCalendarEvents(user) {
+  if (!user.googleAccessToken) return [];
+  const oauth2Client = new google.auth.OAuth2();
+  oauth2Client.setCredentials({ access_token: user.googleAccessToken });
+
+  const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+  const res = await calendar.events.list({
+    calendarId: "primary",
+    maxResults: 10,
+    singleEvents: true,
+    orderBy: "startTime",
+  });
+  return res.data.items || [];
+}
+
+// Route to fetch Gmail & Calendar events
+app.get(`${API_PREFIX}/auth/google/fetch`, auth, async (req, res) => {
+  try {
+    const emails = await fetchGmailMessages(req.user);
+    const events = await fetchCalendarEvents(req.user);
+    res.json({ success: true, emails, events });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, error: "Failed to fetch data" });
+  }
 });
 
 // -------- Bills CRUD --------
