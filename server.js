@@ -344,6 +344,14 @@ function safeUser(u) {
     createdAt: u.created_at,
   };
 }
+// New: extract token from header or cookie
+function extractToken(req) {
+  const authH = req.headers.authorization;
+  if (authH && authH.startsWith("Bearer ")) return authH.slice(7);
+  const cookie = req.headers.cookie || "";
+  const m = cookie.match(/(?:^|;\s*)auth_token=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
 
 function json(res, status, payload) {
   return res.status(status).json({ success: status < 400, ...payload });
@@ -612,6 +620,10 @@ app.post(`${API_PREFIX}/auth/register`, async (req, res) => {
     );
     const user = await one(`SELECT * FROM users WHERE id=$1`, [id]);
     const { token } = issueToken(user);
+    res.setHeader(
+      "Set-Cookie",
+      `auth_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=43200`
+    );
     json(res, 201, { data: { user: safeUser(user), token } });
   } catch (e) {
     console.error(e);
@@ -624,13 +636,17 @@ app.post(`${API_PREFIX}/auth/login`, async (req, res) => {
   const passwordRaw = req.body?.password;
   const email = typeof emailRaw === "string" ? emailRaw.trim() : "";
   const password = typeof passwordRaw === "string" ? passwordRaw : "";
-  if (!email || !password));
-    return json(res, 400, { error: "Email & password required" });
+  if (!email || !password)
+    return json(res, 400, { error: "Email & password required" }); // FIX removed stray parenthesis
   const user = await one(`SELECT * FROM users WHERE email=LOWER($1)`, [email]);
   if (!user) return json(res, 401, { error: "Invalid credentials" });
   const ok = await bcrypt.compare(password, user.password_hash);
   if (!ok) return json(res, 401, { error: "Invalid credentials" });
   const { token } = issueToken(user);
+  res.setHeader(
+    "Set-Cookie",
+    `auth_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=43200`
+  );
   json(res, 200, { data: { user: safeUser(user), token } });
 });
 
@@ -702,7 +718,7 @@ app.get(
     if (FRONTEND_URL) {
       // Set httpOnly cookie (12h) + redirect with hash fragment
       res.setHeader(
-        'Set-Cookie',
+        "Set-Cookie",
         `auth_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=43200`
       );
       const redirectUrl = new URL(FRONTEND_URL);
@@ -934,7 +950,7 @@ app.post(
           const id = uuid();
           await client.query(
             `INSERT INTO bills (id,user_id,name,amount,due_date,status,source_type,created_at,updated_at)
-           VALUES ($1,$2,$3,$4,$5,'active','email',NOW(),NOW())`,
+               VALUES ($1,$2,$3,$4,$5,'active','email',NOW(),NOW())`,
             [
               id,
               req.user.id,
@@ -952,6 +968,17 @@ app.post(
             client
           );
           created.push({ bill: billRow, reminder });
+        } catch (err) {
+          console.warn("[ImportEmail][Skip]", {
+            err: err && err.message,
+            item: e,
+          });
+        }
+      }
+    });
+    json(res, 201, { data: { imported: created.length, items: created } });
+  }
+);
 
 // -------- Reminders --------
 // Create manual reminder

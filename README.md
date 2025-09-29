@@ -262,6 +262,30 @@ Security:
 
 - API keys: hashed (sha256) & stored; raw shown only once on creation.
 
+## New Auth Additions
+
+- Google OAuth callback now (if FRONTEND_URL set) redirects to:
+  FRONTEND_URL/auth/login#token=JWT
+  and also sets an HttpOnly cookie: auth_token.
+- Session probe endpoint:
+  GET /api/v1/auth/session
+  Returns { success:true, data:{ user, token } } if:
+  - Authorization: Bearer <token> header, or
+  - auth_token cookie is valid.
+
+## Frontend Integration (Fragment Token Flow)
+
+1. User completes Google OAuth -> redirected to /auth/login#token=JWT.
+2. login.js reads window.location.hash, stores token (localStorage + optional cookie) then navigates to dashboard.
+3. auth.js (global bootstrap) checks:
+   - auth_token cookie
+   - else localStorage token
+   - if found, optionally call /api/v1/auth/session to refresh user.
+
+## Updated Endpoint List (delta)
+
+- GET /api/v1/auth/session (NEW)
+
 ## Disclaimer
 
 Not production-hardened. No persistence, no rate limiting, no audit logging yet.
