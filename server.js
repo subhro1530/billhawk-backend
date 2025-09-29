@@ -300,14 +300,30 @@ async function ensureSchema() {
 }
 
 // ----------------------- Middleware -----------------------
-app.use(cors());
-app.use(express.json({ limit: "256kb" }));
-app.use(morgan(APP_ENV === "development" ? "dev" : "combined"));
+app.use(
+  cors({
+    origin: "*",
+    methods: "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+    allowedHeaders:
+      "Origin, X-Requested-With, Content-Type, Accept, Authorization",
+    exposedHeaders: "X-Correlation-Id",
+  })
+);
+app.options("*", cors());
 
-// Simple correlation ID for tracing
+// Lightweight request log (path + method)
 app.use((req, res, next) => {
-  req.cid = uuid();
-  res.setHeader("X-Correlation-Id", req.cid);
+  console.log("[REQ]", req.method, req.path);
+  next();
+});
+
+// Legacy path rewrite (allow calling /bills instead of /api/v1/bills)
+const LEGACY_ROOT_REGEX =
+  /^\/(auth|bills|reminders|categories|notifications|analytics|user|premium|admin)\b/;
+app.use((req, res, next) => {
+  if (!req.path.startsWith("/api/") && LEGACY_ROOT_REGEX.test(req.path)) {
+    req.url = "/api/v1" + req.url;
+  }
   next();
 });
 
@@ -489,6 +505,74 @@ function issueToken(userLike) {
 
 // ----------------------- Routes -----------------------
 const API_PREFIX = "/api/v1";
+
+// Endpoint index (quick discovery)
+app.get(`${API_PREFIX}/_endpoints`, (req, res) => {
+  res.json({
+    success: true,
+    data: [
+      "GET /api/v1/health",
+      "POST /api/v1/auth/register",
+      "POST /api/v1/auth/login",
+      "POST /api/v1/auth/admin-login",
+      "GET /api/v1/user/me",
+      "PUT /api/v1/user/me",
+      "PATCH /api/v1/user/security",
+      "GET /api/v1/user/api-keys",
+      "POST /api/v1/user/api-keys",
+      "DELETE /api/v1/user/api-keys/:id",
+      "POST /api/v1/user/export",
+      "GET /api/v1/user/export/:jobId/status",
+      "GET /api/v1/user/export/:jobId/download",
+      "GET /api/v1/user/activity",
+      "POST /api/v1/bills",
+      "GET /api/v1/bills",
+      "GET /api/v1/bills/:id",
+      "PUT /api/v1/bills/:id",
+      "DELETE /api/v1/bills/:id",
+      "POST /api/v1/bills/import/sms",
+      "POST /api/v1/bills/import/email",
+      "POST /api/v1/bills/import/manual",
+      "POST /api/v1/bills/recurring",
+      "GET /api/v1/bills/recurring",
+      "POST /api/v1/bills/:id/settle",
+      "GET /api/v1/bills/:id/history",
+      "PATCH /api/v1/bills/:id/category",
+      "GET /api/v1/bills/search",
+      "GET /api/v1/bills/export",
+      "POST /api/v1/reminders",
+      "GET /api/v1/reminders",
+      "GET /api/v1/reminders/:id",
+      "DELETE /api/v1/reminders/:id",
+      "POST /api/v1/reminders/bulk",
+      "GET /api/v1/reminders/upcoming",
+      "GET /api/v1/reminders/templates",
+      "POST /api/v1/reminders/templates",
+      "GET /api/v1/categories",
+      "POST /api/v1/categories",
+      "GET /api/v1/notifications",
+      "POST /api/v1/notifications/:id/read",
+      "POST /api/v1/notifications/read-all",
+      "GET /api/v1/notifications/stream",
+      "GET /api/v1/analytics/overview",
+      "GET /api/v1/analytics/cashflow",
+      "GET /api/v1/analytics/aging",
+      "GET /api/v1/analytics/category-breakdown",
+      "GET /api/v1/analytics/monthly-trend",
+      "GET /api/v1/analytics/top-counterparties",
+      "POST /api/v1/premium/subscribe",
+      "POST /api/v1/premium/unsubscribe",
+      "GET /api/v1/premium/status",
+      "GET /api/v1/admin/users",
+      "GET /api/v1/admin/users/:id",
+      "PUT /api/v1/admin/users/:id",
+      "DELETE /api/v1/admin/users/:id",
+      "POST /api/v1/admin/users/:id/disable",
+      "GET /api/v1/admin/users/:id/bills",
+      "GET /api/v1/admin/users/:id/reminders",
+    ],
+  });
+});
 
 // Health
 app.get("/", (req, res) => res.send("BillHawk Backend Running"));
