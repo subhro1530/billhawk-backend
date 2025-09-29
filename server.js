@@ -311,6 +311,10 @@ app.use(
 );
 app.options("*", cors());
 
+// FIX: Body parsers (missing previously -> req.body was undefined)
+app.use(express.json({ limit: "256kb" }));
+app.use(express.urlencoded({ extended: true }));
+
 // Lightweight request log (path + method)
 app.use((req, res, next) => {
   console.log("[REQ]", req.method, req.path);
@@ -583,7 +587,10 @@ app.get(`${API_PREFIX}/health`, (req, res) =>
 // -------- Auth --------
 app.post(`${API_PREFIX}/auth/register`, async (req, res) => {
   try {
-    const { email, password } = req.body || {};
+    const emailRaw = req.body?.email;
+    const passwordRaw = req.body?.password;
+    const email = typeof emailRaw === "string" ? emailRaw.trim() : "";
+    const password = typeof passwordRaw === "string" ? passwordRaw : "";
     if (!email || !password)
       return json(res, 400, { error: "Email & password required" });
     const existing = await one(
@@ -612,7 +619,10 @@ app.post(`${API_PREFIX}/auth/register`, async (req, res) => {
 });
 
 app.post(`${API_PREFIX}/auth/login`, async (req, res) => {
-  const { email, password } = req.body || {};
+  const emailRaw = req.body?.email;
+  const passwordRaw = req.body?.password;
+  const email = typeof emailRaw === "string" ? emailRaw.trim() : "";
+  const password = typeof passwordRaw === "string" ? passwordRaw : "";
   if (!email || !password)
     return json(res, 400, { error: "Email & password required" });
   const user = await one(`SELECT * FROM users WHERE email=LOWER($1)`, [email]);
