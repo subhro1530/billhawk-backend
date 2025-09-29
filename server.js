@@ -33,6 +33,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "change_me";
 const APP_ENV = process.env.APP_ENV || "development";
 const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
 const ADMIN_CODE = process.env.ADMIN_CODE || "admin123";
+const FRONTEND_URL = process.env.FRONTEND_URL || null;
 
 //--------------------- Passport Google OAuth2 setup
 
@@ -623,7 +624,7 @@ app.post(`${API_PREFIX}/auth/login`, async (req, res) => {
   const passwordRaw = req.body?.password;
   const email = typeof emailRaw === "string" ? emailRaw.trim() : "";
   const password = typeof passwordRaw === "string" ? passwordRaw : "";
-  if (!email || !password)
+  if (!email || !password));
     return json(res, 400, { error: "Email & password required" });
   const user = await one(`SELECT * FROM users WHERE email=LOWER($1)`, [email]);
   if (!user) return json(res, 401, { error: "Invalid credentials" });
@@ -692,13 +693,24 @@ app.put(`${API_PREFIX}/user/me`, auth, async (req, res) => {
 // Start OAuth flow
 app.get(`${API_PREFIX}/auth/google`, passport.authenticate("google"));
 
-// Callback URL
+// Callback URL (modified to redirect if FRONTEND_URL configured)
 app.get(
   `${API_PREFIX}/auth/google/callback`,
   passport.authenticate("google", { failureRedirect: "/login" }),
   (req, res) => {
-    // Issue JWT for our app
     const { token } = issueToken(req.user);
+    if (FRONTEND_URL) {
+      // Set httpOnly cookie (12h) + redirect with hash fragment
+      res.setHeader(
+        'Set-Cookie',
+        `auth_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=43200`
+      );
+      const redirectUrl = new URL(FRONTEND_URL);
+      // Put token in fragment so it isn't sent to server logs / referrers
+      redirectUrl.hash = `token=${token}`;
+      return res.redirect(redirectUrl.toString());
+    }
+    // Fallback JSON (if no FRONTEND_URL set)
     res.json({ success: true, user: safeUser(req.user), token });
   }
 );
@@ -940,18 +952,6 @@ app.post(
             client
           );
           created.push({ bill: billRow, reminder });
-        } catch (err) {
-          // skip invalid
-          console.warn("[ImportEmail][Skip]", {
-            err: err && err.message,
-            item: e,
-          });
-        }
-      }
-    });
-    json(res, 201, { data: { imported: created.length, items: created } });
-  }
-);
 
 // -------- Reminders --------
 // Create manual reminder
