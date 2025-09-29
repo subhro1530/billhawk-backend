@@ -34,6 +34,8 @@ const APP_ENV = process.env.APP_ENV || "development";
 const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
 const ADMIN_CODE = process.env.ADMIN_CODE || "admin123";
 const FRONTEND_URL = process.env.FRONTEND_URL || null;
+const FRONTEND_LOCAL_URL =
+  process.env.FRONTEND_LOCAL_URL || "http://localhost:3000";
 
 //--------------------- Passport Google OAuth2 setup
 
@@ -85,10 +87,13 @@ passport.use(
           const profileData = {
             reminderOffsetDays: 2,
             notifications: { push: true },
+            oauthProvider: "google",
           };
+          // Mark as OAuth-only account (non-bcrypt sentinel)
+          const oauthMarker = "oauth$google";
           await q(
             `INSERT INTO users (id,email,password_hash,plan,profile) VALUES ($1,$2,$3,'free',$4::jsonb)`,
-            [id, email, "", JSON.stringify(profileData)]
+            [id, email.toLowerCase(), oauthMarker, JSON.stringify(profileData)]
           );
           user = await one(`SELECT * FROM users WHERE id=$1`, [id]);
         }
@@ -637,9 +642,17 @@ app.post(`${API_PREFIX}/auth/login`, async (req, res) => {
   const email = typeof emailRaw === "string" ? emailRaw.trim() : "";
   const password = typeof passwordRaw === "string" ? passwordRaw : "";
   if (!email || !password)
-    return json(res, 400, { error: "Email & password required" }); // FIX removed stray parenthesis
+    return json(res, 400, { error: "Email & password required" });
   const user = await one(`SELECT * FROM users WHERE email=LOWER($1)`, [email]);
   if (!user) return json(res, 401, { error: "Invalid credentials" });
+
+  // Block password auth for OAuth-only accounts (non bcrypt hash)
+  if (!user.password_hash || !user.password_hash.startsWith("$2")) {
+    return json(res, 401, {
+      error: "Use Google OAuth to sign in for this account",
+    });
+  }
+
   const ok = await bcrypt.compare(password, user.password_hash);
   if (!ok) return json(res, 401, { error: "Invalid credentials" });
   const { token } = issueToken(user);
@@ -715,18 +728,34 @@ app.get(
   passport.authenticate("google", { failureRedirect: "/login" }),
   (req, res) => {
     const { token } = issueToken(req.user);
-    if (FRONTEND_URL) {
-      // Set httpOnly cookie (12h) + redirect with hash fragment
-      res.setHeader(
-        "Set-Cookie",
-        `auth_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=43200`
-      );
-      const redirectUrl = new URL(FRONTEND_URL);
-      // Put token in fragment so it isn't sent to server logs / referrers
-      redirectUrl.hash = `token=${token}`;
-      return res.redirect(redirectUrl.toString());
+    // Set HttpOnly cookie
+    res.setHeader(
+      "Set-Cookie",
+      `auth_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=43200`
+    );
+
+    // Support forced JSON (tests / API usage)
+    const wantsJson =
+      req.query.json === "1" ||
+      (req.headers.accept || "").includes("application/json");
+
+    if (wantsJson) {
+      return res.json({ success: true, user: safeUser(req.user), token });
     }
-    // Fallback JSON (if no FRONTEND_URL set)
+
+    // Decide base frontend URL (prod or local fallback)
+    const base =
+      FRONTEND_URL ||
+      FRONTEND_LOCAL_URL ||
+      (req.hostname.includes("localhost") ? "http://localhost:3000" : null);
+
+    if (base) {
+      const redirectUrl = base.replace(/\/+$/, "") + "/dashboard";
+      // Append token via fragment (not sent to server logs / query)
+      return res.redirect(`${redirectUrl}#token=${token}`);
+    }
+
+    // Final fallback JSON if no base resolvable
     res.json({ success: true, user: safeUser(req.user), token });
   }
 );
