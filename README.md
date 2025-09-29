@@ -187,6 +187,81 @@ Returns:
 
 Use this to hydrate a single dashboard view without multiple round trips.
 
+## New Domain Extensions
+
+Auto Maintenance:
+
+- Runs every 60s + lazily on certain requests.
+- Generates bills for due recurring_rules (interval = daily|weekly|monthly).
+- Marks bills past (due_date + 15 days) as status='expired' (idempotent) and issues a notification.
+- Purges reminders whose remind_at < now - 15 days.
+
+New Tables:
+
+- categories, bill_history, recurring_rules, reminder_templates, notifications, api_keys, export_jobs, user_activity.
+
+Key Routes (Summary):
+Bills / Finance:
+
+- POST /api/v1/bills/recurring
+- GET /api/v1/bills/recurring
+- POST /api/v1/bills/:id/settle
+- GET /api/v1/bills/:id/history
+- PATCH /api/v1/bills/:id/category
+- GET /api/v1/categories
+- POST /api/v1/categories
+- GET /api/v1/bills/search?q=term
+- GET /api/v1/bills/export?format=csv
+- POST /api/v1/bills/import/manual (bulk structured JSON)
+
+Reminders:
+
+- POST /api/v1/reminders/bulk
+- GET /api/v1/reminders/upcoming?days=30
+- GET /api/v1/reminders/templates
+- POST /api/v1/reminders/templates
+
+Notifications:
+
+- GET /api/v1/notifications?unread=1
+- POST /api/v1/notifications/:id/read
+- POST /api/v1/notifications/read-all
+- GET /api/v1/notifications/stream (SSE)
+
+Analytics:
+
+- GET /api/v1/analytics/overview
+- GET /api/v1/analytics/cashflow?range=YTD
+- GET /api/v1/analytics/aging
+- GET /api/v1/analytics/category-breakdown
+- GET /api/v1/analytics/monthly-trend
+- GET /api/v1/analytics/top-counterparties
+
+User / Account:
+
+- PATCH /api/v1/user/security (change password)
+- GET /api/v1/user/api-keys
+- POST /api/v1/user/api-keys
+- DELETE /api/v1/user/api-keys/:id
+- POST /api/v1/user/export
+- GET /api/v1/user/export/:jobId/status
+- GET /api/v1/user/export/:jobId/download
+- GET /api/v1/user/activity
+
+Auto-Expiry Policy:
+
+- Bill moves to 'expired' 15 days after due_date if not settled/deleted.
+- Related reminders older than that retention window are purged.
+- Notification generated once per bill upon expiry.
+
+CSV Export:
+
+- Simple inline CSV (immediate) for now; future async large export via export_jobs.
+
+Security:
+
+- API keys: hashed (sha256) & stored; raw shown only once on creation.
+
 ## Disclaimer
 
 Not production-hardened. No persistence, no rate limiting, no audit logging yet.
