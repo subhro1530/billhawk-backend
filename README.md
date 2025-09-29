@@ -160,9 +160,9 @@ Admin access:
 
 Payment simulation:
 
-- Client completes payment externally, obtains a paymentReference.
-- POST /api/v1/premium/subscribe { paymentReference } (must be >= 6 chars) promotes user to premium.
-- Alternate route: POST /api/v1/payments/confirm { provider, reference } also upgrades (demo stub).
+- POST /api/v1/premium/subscribe { paymentReference } (upgrade)
+- POST /api/v1/premium/unsubscribe (downgrade to free, idempotent)
+- POST /api/v1/payments/confirm { provider, reference } (alt upgrade flow)
 
 Security note: Replace ADMIN_CODE before production and move real payment verification server-side (webhooks).
 

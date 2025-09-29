@@ -833,6 +833,23 @@ app.post(`${API_PREFIX}/premium/subscribe`, auth, async (req, res) => {
   });
 });
 
+// NEW: Unsubscribe (downgrade to free)
+app.post(`${API_PREFIX}/premium/unsubscribe`, auth, async (req, res) => {
+  if (req.user.plan === "free") {
+    return json(res, 200, {
+      data: { plan: "free", message: "Already on free plan." },
+    });
+  }
+  await q(`UPDATE users SET plan='free' WHERE id=$1`, [req.user.id]);
+  const updated = await one(`SELECT * FROM users WHERE id=$1`, [req.user.id]);
+  json(res, 200, {
+    data: {
+      plan: updated.plan,
+      message: "Subscription canceled. Reverted to free plan.",
+    },
+  });
+});
+
 app.get(`${API_PREFIX}/premium/status`, auth, (req, res) => {
   json(res, 200, { data: { plan: req.user.plan } });
 });
